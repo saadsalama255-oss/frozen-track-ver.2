@@ -30,6 +30,11 @@ if (!SYNC_TOKEN || SYNC_TOKEN.length < 24) {
 }
 if (configErrors.length) {
   configErrors.forEach(m => console.error('CONFIG ERROR: ' + m));
+  // Names only, never values: helps spot typos such as "DATABASE-URL", trailing spaces or wrong service.
+  const names = Object.keys(process.env)
+    .filter(k => !/^(PATH|HOME|PWD|SHLVL|_|HOSTNAME|LANG|TERM|NODE_.*|NPM_.*|npm_.*|YARN_.*|INIT_CWD|OLDPWD|USER|LOGNAME|SHELL|TMPDIR|EDITOR|PAGER)$/.test(k))
+    .map(k => JSON.stringify(k));
+  console.error('Environment variable NAMES visible to this service: ' + (names.join(', ') || '(none)'));
   process.exit(1);
 }
 
@@ -126,6 +131,12 @@ function mergeState(remote, incoming) {
       ? (newState.set || oldState.set)
       : (oldState.set || newState.set);
   }
+  // Device-local connection secrets must never be stored in the cloud copy.
+  if (out.set && typeof out.set === 'object') {
+    out.set = { ...out.set };
+    delete out.set.syncToken;
+    delete out.set.syncUrl;
+  }
   out._updatedAt = new Date().toISOString();
   return out;
 }
@@ -158,7 +169,12 @@ app.get('/api/state', requireToken, async (_req, res, next) => {
   try {
     const { rows } = await pool.query('SELECT state, updated_at FROM frozenguard_state WHERE id = 1');
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ state: rows[0]?.state || {}, updatedAt: rows[0]?.updated_at || null });
+    const st = rows[0]?.state || {};
+    if (st.set && typeof st.set === 'object') {
+      const { syncToken: _t, syncUrl: _u, ...safeSet } = st.set;
+      st.set = safeSet;
+    }
+    res.json({ state: st, updatedAt: rows[0]?.updated_at || null });
   } catch (err) {
     next(err);
   }
