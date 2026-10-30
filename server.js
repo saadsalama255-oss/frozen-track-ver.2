@@ -135,7 +135,7 @@ function mergeState(remote, incoming) {
       const id = String(row.id);
       const tombstone = deleted[key] && deleted[key][id];
       const stamp = String(row._updatedAt || row.cr || '');
-      if (tombstone && String(tombstone) >= stamp) continue;
+      if (tombstone) continue; // a delete always wins, so removed records never come back
       const prior = byId.get(id);
       const priorStamp = prior ? String(prior._updatedAt || prior.cr || '') : '';
       if (key === 'batches' && prior) byId.set(id, lotUnion(prior, row));
@@ -152,6 +152,8 @@ function mergeState(remote, incoming) {
   const users = new Map();
   for (const user of [...(oldState.users || []), ...(newState.users || [])]) {
     if (!user || !user.u) continue;
+    const ut = deleted.users && deleted.users[String(user.u)];
+    if (ut && String(ut) >= String(user._updatedAt || '')) continue;
     const prior = users.get(String(user.u));
     if (!prior || String(user._updatedAt || '') >= String(prior._updatedAt || '')) {
       users.set(String(user.u), user);
