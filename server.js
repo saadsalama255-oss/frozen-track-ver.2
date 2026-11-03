@@ -105,6 +105,25 @@ function lotUnion(p, r) {
   ['qty', 'q2', 'kg'].forEach(k => { out[k] = sumC(cs, k); });
   return out;
 }
+// Two devices may create the same lot number independently: keep ONE lot and aggregate the contributions.
+function lotsByNo(list, deleted) {
+  const by = new Map();
+  for (const b of list) {
+    const e = by.get(b.no);
+    if (!e) { by.set(b.no, b); continue; }
+    const base = String(e.cr || '') <= String(b.cr || '') ? e : b, oth = base === e ? b : e;
+    const m = new Map();
+    cbsX(base).forEach(c => c.rid && m.set(c.rid, c));
+    cbsX(oth).forEach(c => { if (c.rid && !m.has(c.rid)) m.set(c.rid, c); });
+    const cs = [...m.values()], out = { ...base, _updatedAt: new Date().toISOString() };
+    if (cs.length > 1) { out.contrib = cs; ['qty', 'q2', 'kg'].forEach(k => { out[k] = sumC(cs, k); }); }
+    if (oth.status === 'محجوز' && out.status !== 'محجوز') out.status = 'محجوز';
+    deleted.batches = deleted.batches || {};
+    deleted.batches[String(oth.id)] = new Date().toISOString();
+    by.set(b.no, out);
+  }
+  return [...by.values()];
+}
 function lotPrune(b, rc) {
   if (!b.contrib) return b;
   const cs = b.contrib.filter(c => !c.rid || rc.has(String(c.rid)));
@@ -139,6 +158,7 @@ function mergeState(remote, incoming) {
       const prior = byId.get(id);
       const priorStamp = prior ? String(prior._updatedAt || prior.cr || '') : '';
       if (key === 'batches' && prior) byId.set(id, lotUnion(prior, row));
+      else if (key === 'lt' && prior && !!prior.b !== !!row.b) byId.set(id, prior.b ? prior : row); // a finished timer always beats a still-running copy
       else if (!prior || stamp >= priorStamp) byId.set(id, row);
     }
     out[key] = [...byId.values()];
@@ -147,6 +167,7 @@ function mergeState(remote, incoming) {
     const rc = new Set(out.rcv.map(x => String(x.id)));
     out.batches = out.batches.map(b => lotPrune(b, rc)).filter(Boolean);
   }
+  if (Array.isArray(out.batches)) out.batches = lotsByNo(out.batches, deleted);
 
   // User records are identified by username, not a generated record id.
   const users = new Map();
