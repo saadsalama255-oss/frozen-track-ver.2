@@ -2,7 +2,7 @@
   "name": "frozenguard-android",
   "version": "1.0.0",
   "private": true,
-  "description": "FrozenGuard Android app and sync server",
+  "description": "DC Quality Reports Android app and sync server",
   "scripts": {
     "start": "node server.js"
   },
