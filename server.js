@@ -9,7 +9,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
 const SYNC_TOKEN = process.env.SYNC_TOKEN;
-const CORS_ORIGIN = (process.env.CORS_ORIGIN || 'https://saadsalama255-oss.github.io').split(',').map(x => x.trim()).filter(Boolean);
+const CORS_ORIGIN = (process.env.CORS_ORIGIN || 'https://saadsalama255-oss.github.io,https://localhost,http://localhost,capacitor://localhost').split(',').map(x => x.trim()).filter(Boolean);
 
 const configErrors = [];
 let dbHost = '';
@@ -61,7 +61,8 @@ app.disable('x-powered-by');
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && (CORS_ORIGIN.includes('*') || CORS_ORIGIN.includes(origin) ||
-      (origin === 'https://saadsalama255-oss.github.io' && CORS_ORIGIN.includes('https://saadsalama255-oss.github.io')))) {
+      (origin === 'https://saadsalama255-oss.github.io' && CORS_ORIGIN.includes('https://saadsalama255-oss.github.io')) ||
+      ['https://localhost', 'http://localhost', 'capacitor://localhost'].includes(origin))) { // the installed Android app
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Sync-Token');
@@ -395,6 +396,16 @@ app.post('/api/sync', requireToken, async (req, res, next) => {
 
 // Serve only the front-end file (never server.js, package.json or other repo files).
 const INDEX_FILE = path.join(__dirname, 'index.html');
+// Installable-app files (PWA): manifest, service worker and icons.
+const PWA_FILES = {
+  '/manifest.webmanifest': 'application/manifest+json', '/sw.js': 'application/javascript',
+  '/icon-192.png': 'image/png', '/icon-512.png': 'image/png', '/icon-maskable-512.png': 'image/png', '/apple-touch-icon.png': 'image/png'
+};
+app.get(Object.keys(PWA_FILES), (req, res, next) => {
+  res.type(PWA_FILES[req.path]);
+  res.setHeader('Cache-Control', req.path === '/sw.js' ? 'no-cache' : 'public, max-age=86400');
+  res.sendFile(path.join(__dirname, path.basename(req.path)), err => { if (err) next(); });
+});
 app.get(['/', '/index.html'], (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(INDEX_FILE, err => { if (err) next(); });
