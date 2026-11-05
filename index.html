@@ -785,7 +785,98 @@ function ltBy(done){const T=[...new Set(done.map(t=>t.vtype).filter(Boolean))];i
 function thApply(){let d=0;try{d=localStorage.getItem('fg_theme')==='dark'}catch(e){}const de=document.documentElement;if(de&&de.dataset)de.dataset.theme=d?'dark':'light';const m=document.querySelector('meta[name="theme-color"]');if(m)m.content=d?'#0B1522':'#F4F7FB'}
 function thm(){let d=0;try{d=localStorage.getItem('fg_theme')==='dark';localStorage.setItem('fg_theme',d?'light':'dark')}catch(e){}thApply()}
 (function(){['mod','L','frm','rep','det','trace','bat','BL','opr','rf','mf','ML','ltList','lt','tmp','qual','vehp','aiOpen','aiCtx','insights'].forEach(n=>{try{const f=globalThis[n];if(typeof f==='function'&&!f.__v){const w=viewed(f);w.__v=1;globalThis[n]=w}}catch(e){}})})();
-thApply();
+// Search boxes for dropdowns
+(function addSearchToDropdowns() {
+  const style = document.createElement('style');
+  style.textContent = `
+    .fg-select-search {
+      width: 100%;
+      min-height: 36px;
+      margin: 4px 0 2px;
+      padding: 6px 10px;
+      border: 1px solid var(--b, #d5dbe3);
+      border-radius: 8px;
+      background: var(--c, #fff);
+      color: var(--t, #182536);
+      font: inherit;
+      font-size: 13px;
+    }
+  `;
+  document.head.appendChild(style);
+
+  const normalize = value =>
+    String(value || '').trim().toLocaleLowerCase();
+
+  function enhanceSelect(select) {
+    if (
+      !(select instanceof HTMLSelectElement) ||
+      select.multiple ||
+      select.dataset.fgSearchReady === '1'
+    ) return;
+
+    select.dataset.fgSearchReady = '1';
+
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'fg-select-search';
+    search.placeholder = 'ابحث في الخيارات...';
+    search.setAttribute('aria-label', 'ابحث في خيارات القائمة');
+    search.autocomplete = 'off';
+    search.disabled = select.disabled;
+
+    select.parentNode.insertBefore(search, select);
+
+    search.addEventListener('input', () => {
+      const query = normalize(search.value);
+      const selectedValue = select.value;
+
+      Array.from(select.options).forEach(option => {
+        const matches =
+          normalize(option.textContent).includes(query) ||
+          normalize(option.value).includes(query);
+
+        option.hidden = Boolean(
+          query && option.value !== selectedValue && !matches
+        );
+      });
+    });
+
+    select.addEventListener('change', () => {
+      search.value = '';
+      Array.from(select.options).forEach(option => {
+        option.hidden = false;
+      });
+    });
+  }
+
+  function scan(root) {
+    if (!root) return;
+
+    if (root instanceof HTMLSelectElement) {
+      enhanceSelect(root);
+    }
+
+    if (root.querySelectorAll) {
+      root.querySelectorAll('select').forEach(enhanceSelect);
+    }
+  }
+
+  scan(document);
+
+  new MutationObserver(records => {
+    records.forEach(record => {
+      record.addedNodes.forEach(node => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          scan(node);
+        }
+      });
+    });
+  }).observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+})();
+ thApply();
 rtm();
 R();iconWatch();(function(){try{if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)&&!NATIVE())navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}const sp=document.getElementById('splash');if(sp){sp.style.opacity=0;setTimeout(()=>sp.remove(),480)}try{const u=cfg().url||DEFAULT_SERVER;if(u&&u!==location.origin)fetch(u+'/api/health',{mode:'cors',cache:'no-store'}).catch(()=>{})}catch(e){}})();if(me){if(me.r!=='Admin'&&!cfgOk())syncSetup();else sync()}
 </script></body></html>
