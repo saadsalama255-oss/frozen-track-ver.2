@@ -1,0 +1,8 @@
+{
+  "appId": "com.pyramids.frozenguard",
+  "appName": "FrozenGuard",
+  "webDir": "www",
+  "backgroundColor": "#FFFFFF",
+  "server": { "androidScheme": "https" },
+  "android": { "allowMixedContent": false }
+}
