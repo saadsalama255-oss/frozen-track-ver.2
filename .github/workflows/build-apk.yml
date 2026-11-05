@@ -1,0 +1,7 @@
+.github/workflows/build-apk.yml
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
