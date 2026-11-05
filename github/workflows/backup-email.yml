@@ -1,0 +1,87 @@
+name: Email app backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 */3 * *'
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch backup and email it
+        env:
+          SYNC_API_URL: https://frozen-track-ver-2.onrender.com
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          BACKUP_TO: saadabdelrahman115@gmail.com
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import ssl
+          import smtplib
+          from datetime import datetime, timezone
+          from email.message import EmailMessage
+          from urllib.request import Request, urlopen
+
+          api_url = os.environ["SYNC_API_URL"].rstrip("/")
+          token = os.environ["SYNC_TOKEN"]
+          smtp_user = os.environ["SMTP_USER"]
+          smtp_password = os.environ["SMTP_APP_PASSWORD"]
+          recipient = os.environ["BACKUP_TO"]
+
+          if not token or not smtp_user or not smtp_password:
+              raise SystemExit("Required GitHub Actions secrets are missing.")
+
+          request = Request(
+              api_url + "/api/state",
+              headers={
+                  "X-Sync-Token": token,
+                  "Accept": "application/json"
+              }
+          )
+
+          with urlopen(request, timeout=60) as response:
+              backup = json.load(response)
+
+          backup_bytes = json.dumps(
+              backup,
+              ensure_ascii=False,
+              indent=2
+          ).encode("utf-8")
+
+          timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M_UTC")
+          filename = f"DC-Quality-Reports-backup-{timestamp}.json"
+
+          message = EmailMessage()
+          message["Subject"] = f"نسخة احتياطية من DC Quality Reports - {timestamp}"
+          message["From"] = smtp_user
+          message["To"] = recipient
+          message.set_content(
+              "مرفق نسخة احتياطية من بيانات DC Quality Reports."
+          )
+          message.add_attachment(
+              backup_bytes,
+              maintype="application",
+              subtype="json",
+              filename=filename
+          )
+
+          context = ssl.create_default_context()
+          with smtplib.SMTP_SSL(
+              "smtp.gmail.com",
+              465,
+              context=context,
+              timeout=60
+          ) as smtp:
+              smtp.login(smtp_user, smtp_password)
+              smtp.send_message(message)
+
+          print("Backup email sent successfully.")
+          PY
