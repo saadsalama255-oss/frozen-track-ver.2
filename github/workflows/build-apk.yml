@@ -1,0 +1,68 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'customize.py'
+      - 'icon-192.png'
+      - 'icon-512.png'
+      - 'icon-maskable-512.png'
+      - 'apple-touch-icon.png'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare bundled web assets
+        run: |
+          mkdir -p www
+          cp index.html manifest.webmanifest icon-192.png icon-512.png icon-maskable-512.png apple-touch-icon.png www/
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Android project
+        run: npx cap add android
+
+      - name: Configure app icons, permissions, and version
+        run: python3 customize.py "${{ github.run_number }}"
+
+      - name: Sync Capacitor assets and plugins
+        run: npx cap sync android
+
+      - name: Build installable debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrozenGuard-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
