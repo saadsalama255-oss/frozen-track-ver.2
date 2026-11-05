@@ -1,0 +1,85 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'android-app/**'
+      - '.github/workflows/build-apk.yml'
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Prepare web assets (the app itself is bundled inside the APK)
+        run: |
+          mkdir -p android-app/www
+          cp index.html android-app/www/index.html
+          cp manifest.webmanifest icon-192.png icon-512.png icon-maskable-512.png apple-touch-icon.png android-app/www/
+
+      - name: Install Capacitor
+        working-directory: android-app
+        run: npm install --no-audit --no-fund
+
+      - name: Create the Android project
+        working-directory: android-app
+        run: npx cap add android
+
+      - name: Icons, permissions, version
+        working-directory: android-app
+        run: python3 customize.py "${{ github.run_number }}"
+
+      - name: Sync web assets and plugins
+        working-directory: android-app
+        run: npx cap sync android
+
+      - name: Build debug APK (installable directly)
+        working-directory: android-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrozenGuard-debug-apk
+          path: android-app/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Build and sign release APK (only when the keystore secrets exist)
+        if: env.KS_B64 != ''
+        working-directory: android-app/android
+        run: |
+          ./gradlew assembleRelease --no-daemon
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          UNSIGNED=app/build/outputs/apk/release/app-release-unsigned.apk
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$KS_ALIAS" \
+            --ks-pass pass:"$KS_PASS" --key-pass pass:"$KEY_PASS" \
+            --out "$RUNNER_TEMP/FrozenGuard-release.apk" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify "$RUNNER_TEMP/FrozenGuard-release.apk"
+
+      - name: Upload signed release APK
+        if: env.KS_B64 != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrozenGuard-release-apk
+          path: ${{ runner.temp }}/FrozenGuard-release.apk
