@@ -1,7 +1,7 @@
 {
-  "name": "FrozenGuard — الأهرام للدواجن",
-  "short_name": "FrozenGuard",
-  "description": "نظام مراقبة جودة المنتجات المجمدة وسلسلة التبريد",
+  "name": "DC Quality Reports",
+  "short_name": "DC Quality",
+  "description": "نظام مراقبة الجودة وسلسلة التبريد",
   "lang": "ar",
   "dir": "rtl",
   "start_url": "./",
@@ -11,8 +11,23 @@
   "background_color": "#FFFFFF",
   "theme_color": "#142D4E",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }
