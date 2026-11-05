@@ -406,7 +406,103 @@ function rep(){if(!ok('rep'))return toast('غير مسموح لك بالتقار
 function RS(){const rs=cur(),q=M[rp.k].f.find(f=>f[0]==='qty');$('#rs').innerHTML=`<p class="m">عدد السجلات: ${rs.length}${q?' • إجمالي الكمية: '+rs.reduce((a,r)=>a+(+r.qty||0),0):''}</p><div class="tb">${tbl(rp.k,rs)}</div>`}
 const csv=()=>[cols(rp.k).map(c=>c[1]),...cur().map(r=>cols(rp.k).map(c=>cv(r,c[0])))].map(l=>l.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(',')).join('\n');
 const xl=()=>!ok('rep')?toast('غير مسموح',1):exp(`FrozenGuard-${rp.k}-${td()}.xls`,'application/vnd.ms-excel','<html dir="rtl"><head><meta charset="utf-8"></head><body>'+docTbl(rp.k)+'<h3>'+M[rp.k].t+'</h3>'+tbl(rp.k,cur())+'</body></html>');
-function pdf(){if(!ok('rep'))return toast('غير مسموح',1);$('#pr').innerHTML=`<div dir="rtl">${docHd(rp.k)}<h2>${M[rp.k].t}</h2><p>تاريخ الطباعة: ${td()} • ${esc(me.n)}</p></div>`+tbl(rp.k,cur());if(NATIVE()){exp('FrozenGuard-'+rp.k+'-'+td()+'.html','text/html','<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Tahoma,Arial,sans-serif}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border:1px solid #444;padding:4px}</style></head><body>'+$('#pr').innerHTML+'</body></html>');toast('تم تجهيز التقرير — افتحه بالمتصفح ثم اطبعه أو احفظه PDF');return}try{print()}catch(e){toast('تعذرت الطباعة',1)}}
+function pdf(){if(!ok('rep'))return toast('غير مسموح',1);$('#pr').innerHTML=`<div dir="rtl">${docHd(rp.k)}<h2>${M[rp.k].t}</h2><p>تاريخ الطباعة: ${td()} • ${esc(me.n)}</p></div>`+tbl(rp.k,cur());if(NATIVE()){exp('FrozenGuard-'+rp.k+'-'+td()+'.html','text/html','<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Tahoma,Arial,sans-serif}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border:1px solid #444;padding:4px}</style></head><body>'+$('#pr').innerHTML+<style>
+  .fg-select-search {
+    width: 100%;
+    min-height: 36px;
+    margin: 4px 0 2px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 13px;
+    border: 1px solid var(--b, #d5dbe3);
+    border-radius: 8px;
+    background: var(--c, #fff);
+    color: var(--t, #182536);
+  }
+  .fg-select-search:disabled {
+    opacity: .6;
+  }
+</style>
+
+<script>
+(function () {
+  const normalize = value =>
+    String(value || '').trim().toLocaleLowerCase();
+
+  function enhanceSelect(select) {
+    if (
+      !(select instanceof HTMLSelectElement) ||
+      select.multiple ||
+      select.dataset.fgSearchReady === '1'
+    ) return;
+
+    select.dataset.fgSearchReady = '1';
+
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'fg-select-search';
+    search.placeholder = 'ابحث في الخيارات...';
+    search.setAttribute('aria-label', 'ابحث في خيارات القائمة');
+    search.autocomplete = 'off';
+    search.disabled = select.disabled;
+
+    select.parentNode.insertBefore(search, select);
+
+    function filterOptions() {
+      const query = normalize(search.value);
+      const selectedValue = select.value;
+
+      Array.from(select.options).forEach(option => {
+        const matches =
+          normalize(option.textContent).includes(query) ||
+          normalize(option.value).includes(query);
+
+        // أبقِ الاختيار الحالي ظاهرًا حتى لا تختفي قيمته من القائمة.
+        option.hidden = Boolean(
+          query && option.value !== selectedValue && !matches
+        );
+      });
+    }
+
+    function resetFilter() {
+      search.value = '';
+      Array.from(select.options).forEach(option => {
+        option.hidden = false;
+      });
+    }
+
+    search.addEventListener('input', filterOptions);
+    select.addEventListener('change', resetFilter);
+
+    if (select.disabled) search.disabled = true;
+  }
+
+  function scan(root) {
+    if (!root) return;
+
+    if (root instanceof HTMLSelectElement) {
+      enhanceSelect(root);
+    }
+
+    if (root.querySelectorAll) {
+      root.querySelectorAll('select').forEach(enhanceSelect);
+    }
+  }
+
+  scan(document);
+
+  new MutationObserver(records => {
+    records.forEach(record => {
+      record.addedNodes.forEach(node => {
+        if (node.nodeType === Node.ELEMENT_NODE) scan(node);
+      });
+    });
+  }).observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+})();
+</script>'</body></html>');toast('تم تجهيز التقرير — افتحه بالمتصفح ثم اطبعه أو احفظه PDF');return}try{print()}catch(e){toast('تعذرت الطباعة',1)}}
 // ---- settings
 const LB={ccat:'تصنيفات الشكاوى',reasons:'أسباب المرتجعات',branches:'الفروع',ncrTypes:'أنواع عدم المطابقة',actions:'الإجراءات المتخذة للمرتجعات',wh:'المخازن',suppliers:'جهات التوريد',defects:'أنواع عيوب الكراتين',dwh:'مخازن الصرف',vtypes:'أنواع السيارات'};
 function set(){const s=db.set;$('#mn').innerHTML=`<h2>⚙️ الإدارة</h2>${ADM()}<div class="card"><b>حدود درجات الحرارة</b>${s.units.map((u,i)=>`<div class="row"><input value="${esc(u.n)}" onchange="s_(${i},'n',this.value)"><select onchange="s_(${i},'t',this.value)"><option ${u.t=='ثلاجة'?'selected':''}>ثلاجة</option><option ${u.t=='سيارة'?'selected':''}>سيارة</option></select><input type="number" value="${u.min}" onchange="s_(${i},'min',this.value)"><input type="number" value="${u.max}" onchange="s_(${i},'max',this.value)"><button class="lk bad" onclick="db.set.units.splice(${i},1);sst();set()">✕</button></div>`).join('')}<small>الاسم • النوع • الأدنى • الأقصى</small><button class="b" style="width:100%" onclick="db.set.units.push({n:'وحدة جديدة',t:'ثلاجة',min:-25,max:-18});sst();set()">+ وحدة</button></div>
