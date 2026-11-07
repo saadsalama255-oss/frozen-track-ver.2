@@ -208,6 +208,15 @@ async function initDb() {
     )
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS frozenguard_backups (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      kind TEXT NOT NULL DEFAULT 'auto',
+      size INTEGER NOT NULL DEFAULT 0,
+      state JSONB NOT NULL
+    )
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS frozenguard_files (
       id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
@@ -230,7 +239,7 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const AI_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5';
 const AI_PROVIDER = (process.env.AI_PROVIDER || '').toLowerCase() || (GEMINI_API_KEY ? 'gemini' : ANTHROPIC_API_KEY ? 'anthropic' : '');
 const AI_SYSTEM = [
-  'أنت مساعد ذكي داخل نظام FrozenGuard لشركة الأهرام للدواجن (Pyramids Poultry). تجيب عن أي سؤال يطرحه المستخدم بوضوح ودقة وبالعربية (إلا إذا كتب بلغة أخرى فأجب بلغته).',
+  'أنت مساعد ذكي داخل نظام DC Quality Reports لشركة الأهرام للدواجن (Pyramids Poultry). تجيب عن أي سؤال يطرحه المستخدم بوضوح ودقة وبالعربية (إلا إذا كتب بلغة أخرى فأجب بلغته).',
   'تتخصص في الجودة وسلسلة التبريد وسلامة الغذاء وإدارة المخزون، لكنك تجيب أيضاً عن الأسئلة العامة والعلمية والإدارية والتقنية وغيرها.',
   'عندما يتعلق السؤال ببيانات الشركة أو التطبيق فاعتمد على «بيانات التطبيق» المرفقة فقط، وإذا لم تكفِ فاذكر ذلك ولا تخترع أرقاماً أو سجلات. عندما يكون السؤال عاماً فأجب من معرفتك العامة.',
   'قدّم توصيات عملية مرتبة بالأولوية، واذكر أرقام التشغيلات أو الحالات المعنية عند الحاجة، وكن موجزاً ما لم يُطلب التفصيل.',
@@ -317,6 +326,56 @@ async function assistantHandler(req, res) {
 }
 app.post('/api/assistant', requireToken, assistantHandler);
 
+// ---- Automatic database backups: one snapshot of the synced state every 72 hours.
+// Render's free instances sleep, so the check runs at start-up, hourly, and after syncs (throttled).
+const BACKUP_EVERY_MS = 72 * 3600 * 1000;
+const BACKUP_KEEP = { auto: 20, manual: 10 };
+let lastBackupCheck = 0;
+async function backupNow(kind) {
+  const { rows } = await pool.query(
+    `INSERT INTO frozenguard_backups (kind, size, state)
+     SELECT $1, pg_column_size(state), state FROM frozenguard_state WHERE id = 1
+     RETURNING id, created_at, kind, size`, [kind]);
+  for (const k of Object.keys(BACKUP_KEEP)) {
+    await pool.query(
+      `DELETE FROM frozenguard_backups WHERE kind = $1 AND id NOT IN
+         (SELECT id FROM frozenguard_backups WHERE kind = $1 ORDER BY created_at DESC, id DESC LIMIT $2)`,
+      [k, BACKUP_KEEP[k]]);
+  }
+  return rows[0];
+}
+async function ensureBackup(force) {
+  const now = Date.now();
+  if (!force && now - lastBackupCheck < 10 * 60 * 1000) return null;
+  lastBackupCheck = now;
+  const cur = await pool.query('SELECT state FROM frozenguard_state WHERE id = 1');
+  if (!cur.rows[0] || Object.keys(cur.rows[0].state || {}).length === 0) return null; // nothing to protect yet
+  const last = await pool.query("SELECT created_at FROM frozenguard_backups WHERE kind = 'auto' ORDER BY created_at DESC LIMIT 1");
+  if (last.rows[0] && now - new Date(last.rows[0].created_at).getTime() < BACKUP_EVERY_MS) return null;
+  const b = await backupNow('auto');
+  console.log('Automatic backup created, id=' + b.id);
+  return b;
+}
+app.get('/api/backups', requireToken, async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query('SELECT id, created_at, kind, size FROM frozenguard_backups ORDER BY created_at DESC, id DESC LIMIT 60');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ backups: rows, everyHours: BACKUP_EVERY_MS / 3600000 });
+  } catch (err) { next(err); }
+});
+app.post('/api/backups', requireToken, async (_req, res, next) => {
+  try { res.json({ ok: true, backup: await backupNow('manual') }); } catch (err) { next(err); }
+});
+app.get('/api/backups/:id', requireToken, async (req, res, next) => {
+  if (!/^\d{1,12}$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const { rows } = await pool.query('SELECT id, created_at, kind, state FROM frozenguard_backups WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
 // Complaint photos live outside the synced state: records only hold the photo ids.
 app.post('/api/file', requireToken, async (req, res, next) => {
   const { id, data } = req.body || {};
@@ -341,7 +400,7 @@ app.get('/api/file/:id', requireToken, async (req, res, next) => {
 });
 
 app.get('/api/health', async (req, res) => {
-  const body = { ok: true, service: 'FrozenGuard API', time: new Date().toISOString() };
+  const body = { ok: true, service: 'DC Quality Reports API', time: new Date().toISOString() };
   if (req.query.deep === '1') {
     try { await pool.query('SELECT 1'); body.db = 'up'; }
     catch (_e) { body.ok = false; body.db = 'down'; return res.status(503).json(body); }
@@ -384,6 +443,7 @@ app.post('/api/sync', requireToken, async (req, res, next) => {
       [JSON.stringify(merged)]
     );
     await client.query('COMMIT');
+    ensureBackup(false).catch(e => console.error('Backup check failed:', e.message));
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ok: true, state: merged, updatedAt: new Date().toISOString() });
   } catch (err) {
@@ -428,7 +488,9 @@ async function start() {
       await new Promise(r => setTimeout(r, 3000));
     }
   }
-  const server = app.listen(PORT, '0.0.0.0', () => console.log(`FrozenGuard server listening on ${PORT} (database OK)`));
+  ensureBackup(true).catch(e => console.error('Backup check failed:', e.message));
+  setInterval(() => ensureBackup(true).catch(e => console.error('Backup check failed:', e.message)), 3600 * 1000).unref();
+  const server = app.listen(PORT, '0.0.0.0', () => console.log(`DC Quality Reports server listening on ${PORT} (database OK)`));
   const shutdown = sig => {
     console.log(`${sig} received, shutting down`);
     server.close(async () => { await pool.end().catch(() => {}); process.exit(0); });
