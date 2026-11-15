@@ -1,6 +1,3 @@
-// server.js — سيرفر مزامنة DC Quality Reports (مُحصَّن)
-'use strict';
-
 const express = require('express');
 const crypto  = require('crypto');
 const helmet  = require('helmet');
