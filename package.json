@@ -1,17 +1,24 @@
 {
   "name": "frozenguard-android",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "DC Quality Reports Android app and sync server",
+  "engines": { "node": ">=20" },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "serve:web": "npx http-server . -p 8080 -c-1",
+    "audit": "npm audit --omit=dev"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
     "@capacitor/core": "^6.2.0",
     "@capacitor/filesystem": "^6.0.0",
     "@capacitor/share": "^6.0.0",
+    "cors": "^2.8.5",
     "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {
