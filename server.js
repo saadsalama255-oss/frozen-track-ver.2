@@ -4,6 +4,8 @@ const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
 const crypto = require('crypto');
+const scope = require('./scope.js');
+const REQUIRE_USER_SESSION = process.env.REQUIRE_USER_SESSION === '1';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -83,6 +85,47 @@ function requireToken(req, res, next) {
   next();
 }
 
+// ---- per-user sessions (server-side identity). The shared SYNC_TOKEN still identifies the device/app;
+// the session identifies the person, so permissions can be enforced here and not only in the browser.
+function withUser(opts) {
+  return async (req, res, next) => {
+    try {
+      const tok = req.get('X-User-Session');
+      if (!tok) {
+        if (REQUIRE_USER_SESSION) return res.status(401).json({ error: 'Login required', code: 'session' });
+        req.user = null; // legacy app version without sessions (disable with REQUIRE_USER_SESSION=1 once every device is updated)
+        return next();
+      }
+      const un = scope.readSession(SYNC_TOKEN, tok);
+      const { rows } = await pool.query("SELECT state->'users' AS users FROM frozenguard_state WHERE id = 1");
+      const user = un && (rows[0] && rows[0].users || []).find(x => x && x.u === un);
+      if (!user) return res.status(401).json({ error: 'Session expired', code: 'session' });
+      if (opts && opts.priv && !scope.isPriv(user)) return res.status(403).json({ error: 'Not allowed' });
+      req.user = user;
+      next();
+    } catch (err) { next(err); }
+  };
+}
+const loginFails = new Map();
+app.post('/api/login', requireToken, async (req, res, next) => {
+  const { u, p } = req.body || {};
+  if (typeof u !== 'string' || typeof p !== 'string' || !u || u.length > 80 || p.length > 200) return res.status(400).json({ error: 'Invalid login' });
+  const key = (req.ip || '') + '|' + u, f = loginFails.get(key) || { n: 0, until: 0 };
+  if (f.until > Date.now()) return res.status(429).json({ error: 'Too many attempts' });
+  try {
+    const { rows } = await pool.query("SELECT state->'users' AS users FROM frozenguard_state WHERE id = 1");
+    const user = (rows[0] && rows[0].users || []).find(x => x && x.u === u);
+    if (!user || !scope.verifyPassword(user, p)) {
+      f.n++; if (f.n >= 5) f.until = Date.now() + 30000 * Math.min(8, f.n - 4);
+      loginFails.set(key, f);
+      return res.status(401).json({ error: 'Invalid login' });
+    }
+    loginFails.delete(key);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ session: scope.signSession(SYNC_TOKEN, user.u), user: { u: user.u, n: user.n, r: user.r, wg: user.wg || '' } });
+  } catch (err) { next(err); }
+});
+
 const COLLECTIONS = [
   'temps', 'ncr', 'returns', 'complaints', 'flow', 'batches', 'ops',
   'veh', 'capa', 'recall', 'prods', 'rcv', 'mvs', 'lt', 'audit'
@@ -110,8 +153,9 @@ function lotUnion(p, r) {
 function lotsByNo(list, deleted) {
   const by = new Map();
   for (const b of list) {
-    const e = by.get(b.no);
-    if (!e) { by.set(b.no, b); continue; }
+    const lk = b.no + '\u0001' + (b.prod || '');
+    const e = by.get(lk);
+    if (!e) { by.set(lk, b); continue; }
     const base = String(e.cr || '') <= String(b.cr || '') ? e : b, oth = base === e ? b : e;
     const m = new Map();
     cbsX(base).forEach(c => c.rid && m.set(c.rid, c));
@@ -121,7 +165,7 @@ function lotsByNo(list, deleted) {
     if (oth.status === 'محجوز' && out.status !== 'محجوز') out.status = 'محجوز';
     deleted.batches = deleted.batches || {};
     deleted.batches[String(oth.id)] = new Date().toISOString();
-    by.set(b.no, out);
+    by.set(lk, out);
   }
   return [...by.values()];
 }
@@ -221,6 +265,15 @@ async function initDb() {
       id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS frozenguard_sync_audit (
+      id BIGSERIAL PRIMARY KEY,
+      at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      username TEXT,
+      event TEXT NOT NULL,
+      detail JSONB NOT NULL DEFAULT '{}'::jsonb
     )
   `);
   await pool.query(`
@@ -324,7 +377,7 @@ async function assistantHandler(req, res) {
     res.status(502).json({ error: 'AI service unreachable' });
   }
 }
-app.post('/api/assistant', requireToken, assistantHandler);
+app.post('/api/assistant', requireToken, withUser(), assistantHandler);
 
 // ---- Automatic database backups: one snapshot of the synced state every 72 hours.
 // Render's free instances sleep, so the check runs at start-up, hourly, and after syncs (throttled).
@@ -356,17 +409,17 @@ async function ensureBackup(force) {
   console.log('Automatic backup created, id=' + b.id);
   return b;
 }
-app.get('/api/backups', requireToken, async (_req, res, next) => {
+app.get('/api/backups', requireToken, withUser({ priv: true }), async (_req, res, next) => {
   try {
     const { rows } = await pool.query('SELECT id, created_at, kind, size FROM frozenguard_backups ORDER BY created_at DESC, id DESC LIMIT 60');
     res.setHeader('Cache-Control', 'no-store');
     res.json({ backups: rows, everyHours: BACKUP_EVERY_MS / 3600000 });
   } catch (err) { next(err); }
 });
-app.post('/api/backups', requireToken, async (_req, res, next) => {
+app.post('/api/backups', requireToken, withUser({ priv: true }), async (_req, res, next) => {
   try { res.json({ ok: true, backup: await backupNow('manual') }); } catch (err) { next(err); }
 });
-app.get('/api/backups/:id', requireToken, async (req, res, next) => {
+app.get('/api/backups/:id', requireToken, withUser({ priv: true }), async (req, res, next) => {
   if (!/^\d{1,12}$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   try {
     const { rows } = await pool.query('SELECT id, created_at, kind, state FROM frozenguard_backups WHERE id = $1', [req.params.id]);
@@ -377,11 +430,11 @@ app.get('/api/backups/:id', requireToken, async (req, res, next) => {
 });
 
 // Complaint photos live outside the synced state: records only hold the photo ids.
-app.post('/api/file', requireToken, async (req, res, next) => {
+app.post('/api/file', requireToken, withUser(), async (req, res, next) => {
   const { id, data } = req.body || {};
   if (typeof id !== 'string' || !/^[a-z0-9]{4,40}$/i.test(id) ||
       typeof data !== 'string' || data.length > 900000 ||
-      !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(data)) {
+      !/^data:(image\/(jpeg|png|webp)|text\/csv|text\/plain|application\/(vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet|vnd\.ms-excel|octet-stream));base64,[A-Za-z0-9+/=]+$/.test(data)) {
     return res.status(400).json({ error: 'Invalid file' });
   }
   try {
@@ -389,7 +442,7 @@ app.post('/api/file', requireToken, async (req, res, next) => {
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
-app.get('/api/file/:id', requireToken, async (req, res, next) => {
+app.get('/api/file/:id', requireToken, withUser(), async (req, res, next) => {
   if (!/^[a-z0-9]{4,40}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   try {
     const { rows } = await pool.query('SELECT data FROM frozenguard_files WHERE id = $1', [req.params.id]);
@@ -408,7 +461,7 @@ app.get('/api/health', async (req, res) => {
   res.json(body);
 });
 
-app.get('/api/state', requireToken, async (_req, res, next) => {
+app.get('/api/state', requireToken, withUser(), async (req, res, next) => {
   try {
     const { rows } = await pool.query('SELECT state, updated_at FROM frozenguard_state WHERE id = 1');
     res.setHeader('Cache-Control', 'no-store');
@@ -417,13 +470,13 @@ app.get('/api/state', requireToken, async (_req, res, next) => {
       const { syncToken: _t, syncUrl: _u, ...safeSet } = st.set;
       st.set = safeSet;
     }
-    res.json({ state: st, updatedAt: rows[0]?.updated_at || null });
+    res.json({ state: scope.filterState(st, req.user), updatedAt: rows[0]?.updated_at || null });
   } catch (err) {
     next(err);
   }
 });
 
-app.post('/api/sync', requireToken, async (req, res, next) => {
+app.post('/api/sync', requireToken, withUser(), async (req, res, next) => {
   const incoming = req.body && req.body.state;
   if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
     return res.status(400).json({ error: 'Expected JSON body: { "state": { ... } }' });
@@ -435,7 +488,15 @@ app.post('/api/sync', requireToken, async (req, res, next) => {
     // Serialize concurrent syncs so two devices cannot overwrite each other's changes.
     await client.query('SELECT pg_advisory_xact_lock(724190251)');
     const result = await client.query('SELECT state FROM frozenguard_state WHERE id = 1 FOR UPDATE');
-    const merged = mergeState(result.rows[0]?.state || {}, incoming);
+    const oldState = result.rows[0]?.state || {};
+    // 1) drop what this person may not write (other groups' records, settings/users for non-admins, most deletes)
+    const { __dropped, ...guarded } = scope.guardIncoming(oldState, incoming, req.user);
+    const merged = mergeState(oldState, guarded);
+    // 2) per-warehouse stock check inside the same transaction: a dispatch/transfer that exceeds its warehouse balance is refused
+    const rejected = scope.enforceStock(oldState, merged);
+    const uname = req.user ? req.user.u : null;
+    if (rejected.length) await client.query('INSERT INTO frozenguard_sync_audit (username, event, detail) VALUES ($1, $2, $3::jsonb)', [uname, 'stock_rejected', JSON.stringify(rejected)]);
+    if (__dropped && Object.keys(__dropped).length) await client.query('INSERT INTO frozenguard_sync_audit (username, event, detail) VALUES ($1, $2, $3::jsonb)', [uname, 'scope_dropped', JSON.stringify(__dropped)]);
     await client.query(
       `INSERT INTO frozenguard_state (id, state, updated_at)
        VALUES (1, $1::jsonb, NOW())
@@ -445,7 +506,7 @@ app.post('/api/sync', requireToken, async (req, res, next) => {
     await client.query('COMMIT');
     ensureBackup(false).catch(e => console.error('Backup check failed:', e.message));
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, state: merged, updatedAt: new Date().toISOString() });
+    res.json({ ok: true, state: scope.filterState(merged, req.user), rejected, updatedAt: new Date().toISOString() });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     next(err);
