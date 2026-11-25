@@ -67,7 +67,7 @@ app.use((req, res, next) => {
       ['https://localhost', 'http://localhost', 'capacitor://localhost'].includes(origin))) { // the installed Android app
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Sync-Token');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Sync-Token, X-User-Session');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
